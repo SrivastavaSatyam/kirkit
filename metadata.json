@@ -1,0 +1,6 @@
+{
+  "name": "Boundary League",
+  "description": "High-octane gully cricket scoring app where every boundary counts and the last rank pays the party.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
