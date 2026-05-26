@@ -1,5 +1,14 @@
 import { calculatePlayerStats, type Match, type Player, type Tournament } from './types';
 
+/** Treat / danger zone / sponsor: only players not series-absconded */
+export function isTreatEligible(p: Player): boolean {
+  return !p.seriesAbsconded;
+}
+
+export function treatActivePlayers(players: Player[]): Player[] {
+  return players.filter(isTreatEligible);
+}
+
 function nn(x: number | undefined): number {
   const n = Number(x);
   return Number.isFinite(n) ? n : 0;
@@ -94,12 +103,13 @@ export function resolvePartyBottomPlayer(
   return first;
 }
 
-/** Lowest-series player used for Treat sponsor tie-break (last in latest match queue). */
+/** Lowest-series **active** (non–series-absconded) player — Treat sponsor tie-break uses latest match queue. */
 export function partySponsorPlayer(tournament: Tournament): Player | undefined {
-  if (!tournament.players.length) return undefined;
+  const active = treatActivePlayers(tournament.players);
+  if (!active.length) return undefined;
   const lastMatch =
     tournament.matches.length > 0 ? tournament.matches[tournament.matches.length - 1] : undefined;
-  return resolvePartyBottomPlayer(tournament.players, undefined, lastMatch ?? null);
+  return resolvePartyBottomPlayer(active, undefined, lastMatch ?? null);
 }
 
 export function partyDangerPlayer(
@@ -107,5 +117,7 @@ export function partyDangerPlayer(
   live?: Map<string, number>,
   orderMatch?: Match | null,
 ): Player | undefined {
-  return resolvePartyBottomPlayer(players, live, orderMatch ?? null);
+  const active = treatActivePlayers(players);
+  if (!active.length) return undefined;
+  return resolvePartyBottomPlayer(active, live, orderMatch ?? null);
 }

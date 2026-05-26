@@ -8,6 +8,7 @@ import {
   sortedByPartyBestFirst,
   sortedByPartyWorstFirst,
   totalSeriesRuns,
+  treatActivePlayers,
 } from '@/lib/standings';
 import { MAX_LEGAL_BALLS, calculatePlayerStats, type Match, type Tournament } from '@/lib/types';
 import { Trophy, Undo, ChevronRight, ChevronLeft, Zap, Target, AlertCircle, TrendingDown, Flame, UserPlus, Settings, X, Plus, Info } from 'lucide-react';
@@ -57,7 +58,7 @@ function BattingQueueStrip({ activeMatch, tournament, prevScoreById, maxRankBoos
                   : p.status === 'completed'
                     ? 'bg-gray-900/50 border-white/5 text-gray-500 opacity-50'
                     : p.status === 'absconded'
-                      ? 'bg-neon-red/10 border-neon-red/20 text-neon-red/50 opacity-40 grayscale'
+                      ? 'bg-gray-800/50 border-white/10 text-gray-500 opacity-45 grayscale'
                       : 'glass border-white/10 text-white/70'
               } ${expanded ? 'ring-1 ring-neon-yellow/40 border-neon-yellow/30' : ''}`}
             >
@@ -160,16 +161,23 @@ export default function LiveScoring() {
     const currentPlayer = activeMatch.players[activeMatch.currentBatterIndex];
     if (!currentPlayer) return null;
 
-    const liveMap = liveScoreMapFromMatch(activeMatch);
-    const sortedPlayers = sortedByPartyWorstFirst(tournament.players, liveMap);
-    const lowestPlayer = sortedPlayers[0];
     const tpCurrent = tournament.players.find((p) => p.id === currentPlayer.id);
+    if (tpCurrent?.seriesAbsconded) return null;
+
+    const liveMap = liveScoreMapFromMatch(activeMatch);
+    const eligible = treatActivePlayers(tournament.players);
+    if (!eligible.some((p) => p.id === currentPlayer.id)) return null;
+
+    const sortedPlayers = sortedByPartyWorstFirst(eligible, liveMap);
+    if (!sortedPlayers.length) return null;
+
+    const lowestPlayer = sortedPlayers[0];
     const totalCumulative = totalSeriesRuns(tpCurrent ?? currentPlayer, liveMap?.get(currentPlayer.id));
 
     const seriesTotal = (p: (typeof tournament.players)[number]) =>
       totalSeriesRuns(p, liveMap?.get(p.id));
     const minRuns = seriesTotal(lowestPlayer);
-    /** Party danger = tied for lowest series total (must go strictly above min to leave the bottom tier). */
+    /** Party danger = tied for lowest among **active** players only. */
     const isCurrentLast = totalCumulative === minRuns;
 
     if (sortedPlayers.length < 2) {
@@ -456,7 +464,7 @@ export default function LiveScoring() {
       {/* Main Score Area */}
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 pb-3 pt-2 sm:px-6">
         <motion.div 
-          key={currentPlayer.score}
+          key={`${currentPlayer.id}-${currentPlayer.score}-${currentPlayer.history.length}`}
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           className="relative text-center w-full max-w-[min(100vw-2rem,28rem)]"
@@ -857,7 +865,7 @@ export default function LiveScoring() {
                     <div 
                       key={player.id}
                       className={`glass rounded-[24px] p-4 flex items-center justify-between border-white/5 ${
-                        player.status === 'absconded' ? 'opacity-40 grayscale pointer-events-none' : ''
+                        player.status === 'absconded' ? 'opacity-45 grayscale' : ''
                       } ${isCurrent ? 'ring-1 ring-neon-blue/50 bg-neon-blue/5' : ''}`}
                     >
                       <div className="flex items-center gap-4">

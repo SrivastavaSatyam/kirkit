@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useGame } from '@/lib/store';
-import { partySponsorPlayer, sortedByPartyBestFirst } from '@/lib/standings';
+import { partySponsorPlayer, sortedByPartyBestFirst, treatActivePlayers } from '@/lib/standings';
 import { useRouter } from 'next/navigation';
 import { Trophy, Zap, Flame, Crown, Home, Medal, ChevronRight } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -31,20 +31,37 @@ export default function SeriesResults() {
 
   const stats = useMemo(() => {
     if (!tournament) return null;
-    
+
     const players = sortedByPartyBestFirst(tournament.players);
+    const activePlayers = treatActivePlayers(tournament.players);
+    const abscondedPlayers = tournament.players.filter((p) => p.seriesAbsconded);
+    const activeSorted = sortedByPartyBestFirst(activePlayers);
     const winner = players[0];
-    const partySponsor = partySponsorPlayer(tournament) ?? players[players.length - 1];
-    
-    const maxSixes = Math.max(...players.map(p => p.totalSixes));
-    const sixerKing = players.find(p => p.totalSixes === maxSixes && maxSixes > 0);
-    
-    const maxFours = Math.max(...players.map(p => p.totalFours));
-    const boundaryMachine = players.find(p => p.totalFours === maxFours && maxFours > 0);
+    const partySponsor =
+      partySponsorPlayer(tournament) ?? (activeSorted.length ? activeSorted[activeSorted.length - 1] : undefined);
 
-    const escapeArtist = players.find(p => p.id !== partySponsor.id && p.cumulativeRuns < partySponsor.cumulativeRuns + 10);
+    const maxSixes = Math.max(...players.map((p) => p.totalSixes));
+    const sixerKing = players.find((p) => p.totalSixes === maxSixes && maxSixes > 0);
 
-    return { players, winner, partySponsor, sixerKing, boundaryMachine, escapeArtist };
+    const maxFours = Math.max(...players.map((p) => p.totalFours));
+    const boundaryMachine = players.find((p) => p.totalFours === maxFours && maxFours > 0);
+
+    const escapeArtist =
+      partySponsor &&
+      activePlayers.find(
+        (p) => p.id !== partySponsor.id && p.cumulativeRuns < partySponsor.cumulativeRuns + 10,
+      );
+
+    return {
+      players,
+      activeSorted,
+      abscondedPlayers,
+      winner,
+      partySponsor,
+      sixerKing,
+      boundaryMachine,
+      escapeArtist,
+    };
   }, [tournament]);
 
   if (!tournament || !stats) return null;
@@ -103,7 +120,8 @@ export default function SeriesResults() {
         </div>
       </motion.div>
 
-      {/* Official Treat Sponsor */}
+      {/* Official Treat Sponsor — lowest active non-absconded only */}
+      {stats.partySponsor && (
       <motion.div 
         initial={{ x: -20, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
@@ -121,9 +139,10 @@ export default function SeriesResults() {
              />
           </div>
           <div className="flex-1">
-            <span className="text-[8px] font-mono bg-neon-red/20 text-neon-red px-2 py-0.5 rounded-full font-black uppercase tracking-wide">🏆 Official Treat Sponsor</span>
+            <span className="text-[8px] font-mono bg-neon-red/20 text-neon-red px-2 py-0.5 rounded-full font-black uppercase tracking-wide">💀 Official Treat Sponsor</span>
             <h3 className="text-xl font-space font-bold mt-1">{stats.partySponsor.name}</h3>
             <p className="text-xs text-gray-500">Total Runs: {stats.partySponsor.cumulativeRuns}</p>
+            <p className="text-[9px] font-mono text-gray-600 mt-1 uppercase tracking-tight">Lowest among active players — absconded excluded</p>
           </div>
           <div className="text-right">
             <span className="text-2xl">😭</span>
@@ -131,6 +150,7 @@ export default function SeriesResults() {
           </div>
         </div>
       </motion.div>
+      )}
 
       {/* Special Awards Grid */}
       <div className="grid grid-cols-2 gap-4 mb-4">
@@ -170,14 +190,91 @@ export default function SeriesResults() {
       </div>
 
       <div className="bg-neon-blue/10 border border-neon-blue/30 rounded-2xl p-4 mb-8 text-center italic text-xs font-mono text-neon-blue">
-        &quot;🏏 {stats.winner.name} dominated today&apos;s series — {stats.partySponsor.name} is the current Treat Sponsor.&quot;
+        {stats.partySponsor ? (
+          <>
+            &quot;🏏 {stats.winner.name} dominated today&apos;s series — {stats.partySponsor.name} is the Treat Sponsor among active players.&quot;
+          </>
+        ) : (
+          <>Series wrapped — no active players remained eligible for Treat assignment.</>
+        )}
       </div>
 
-      {/* Final Standings List */}
+      {/* Active series standings (Treat-eligible) */}
+      <div className="space-y-3 mb-8">
+        <h3 className="text-sm font-mono text-gray-500 uppercase tracking-widest ml-1 mb-4">🏆 Active series results</h3>
+        {stats.activeSorted.length === 0 ? (
+          <p className="text-xs text-gray-600 font-mono px-1">No active players on the board.</p>
+        ) : (
+          stats.activeSorted.map((player, idx) => (
+            <div key={player.id} className="glass-dark rounded-2xl p-4 flex items-center justify-between border-white/5">
+              <div className="flex items-center gap-4">
+                <span className="text-sm font-mono text-gray-600 w-4">{idx + 1}</span>
+                <div className="w-10 h-10 rounded-xl bg-gray-900 border border-white/5 overflow-hidden">
+                   <AvatarImg
+                     src={avatarImgSrc(player)}
+                     alt="avatar"
+                     width={40}
+                     height={40}
+                     className="h-full w-full object-cover"
+                   />
+                </div>
+                <div>
+                  <p className="font-space font-bold">{player.name}</p>
+                  <p className="text-[10px] font-mono text-gray-500">{player.totalMatches} Matches Played</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-lg font-space font-black">{player.cumulativeRuns}</p>
+                <p className="text-[8px] font-mono text-gray-600 uppercase">Total Runs</p>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Absconded — informational only */}
+      {stats.abscondedPlayers.length > 0 && (
+        <div className="space-y-3 mb-12">
+          <h3 className="text-sm font-mono text-orange-500/90 uppercase tracking-widest ml-1 mb-4">🚫 Absconded players</h3>
+          {stats.abscondedPlayers.map((player) => (
+            <div
+              key={player.id}
+              className="glass-dark rounded-2xl p-4 flex items-center justify-between border-white/5 opacity-50 grayscale"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-xl bg-gray-900 border border-white/5 overflow-hidden">
+                  <AvatarImg
+                    src={avatarImgSrc(player)}
+                    alt="avatar"
+                    width={40}
+                    height={40}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div>
+                  <p className="font-space font-bold text-gray-400">{player.name}</p>
+                  <p className="text-[10px] font-mono text-gray-600">
+                    Left during Match {player.abscondedAtMatchNumber ?? '—'} · excluded from Treat
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-lg font-space font-black text-gray-500">{player.cumulativeRuns}</p>
+                <p className="text-[8px] font-mono text-gray-600 uppercase">Total Runs</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Overall order reference (includes absconded) */}
       <div className="space-y-3 mb-12">
-        <h3 className="text-sm font-mono text-gray-500 uppercase tracking-widest ml-1 mb-4">Final Standings</h3>
+        <h3 className="text-sm font-mono text-gray-500 uppercase tracking-widest ml-1 mb-4">Overall ranking (all players)</h3>
         {stats.players.map((player, idx) => (
-          <div key={player.id} className="glass-dark rounded-2xl p-4 flex items-center justify-between border-white/5">
+          <div
+            key={player.id}
+            className={`glass-dark rounded-2xl p-4 flex items-center justify-between border-white/5 ${player.seriesAbsconded ? 'opacity-45 grayscale' : ''}`}
+          >
             <div className="flex items-center gap-4">
               <span className="text-sm font-mono text-gray-600 w-4">{idx + 1}</span>
               <div className="w-10 h-10 rounded-xl bg-gray-900 border border-white/5 overflow-hidden">
@@ -191,7 +288,10 @@ export default function SeriesResults() {
               </div>
               <div>
                 <p className="font-space font-bold">{player.name}</p>
-                <p className="text-[10px] font-mono text-gray-500">{player.totalMatches} Matches Played</p>
+                <p className="text-[10px] font-mono text-gray-500">
+                  {player.totalMatches} Matches Played
+                  {player.seriesAbsconded ? ' · ABSCONDED' : ''}
+                </p>
               </div>
             </div>
             <div className="text-right">
