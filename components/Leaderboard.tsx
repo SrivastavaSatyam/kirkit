@@ -54,13 +54,19 @@ export default function Leaderboard() {
         displaySixes: safeTotalSixes + liveSixes,
         displayFours: safeTotalFours + liveFours,
         isCurrentlyBatting: matchPlayer?.status === 'batting',
-        isAbscondedInMatch: matchPlayer?.status === 'absconded',
+        /** Series-persisted or current match sheet — Treat / UI exclusion */
+        isExcludedFromTreat: Boolean(player.seriesAbsconded) || matchPlayer?.status === 'absconded',
         runsPerBattle,
         battleTrend,
         showLatePill,
       };
     });
   }, [tournament, activeMatch]);
+
+  const treatActiveSorted = useMemo(
+    () => sortedPlayersWithLive.filter((p) => !p.isExcludedFromTreat),
+    [sortedPlayersWithLive],
+  );
 
   return (
     <div className="min-h-screen bg-black px-6 pt-12 pb-32">
@@ -86,12 +92,14 @@ export default function Leaderboard() {
         ) : (
           sortedPlayersWithLive.map((player, index) => {
             const isFirst = index === 0;
-            const isLast = index === sortedPlayersWithLive.length - 1;
-            const isDanger = isLast && sortedPlayersWithLive.length > 1;
+            const isExcludedTreat = player.isExcludedFromTreat;
+            const lastActive = treatActiveSorted[treatActiveSorted.length - 1];
+            const isDanger =
+              !isExcludedTreat &&
+              treatActiveSorted.length > 1 &&
+              lastActive?.id === player.id;
             const missedMatches = player.joinedAtMatchIndex;
             const showLatePill = player.showLatePill;
-            
-            const isAbscondedInMatch = player.isAbscondedInMatch;
 
             return (
               <motion.div 
@@ -99,46 +107,62 @@ export default function Leaderboard() {
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: index * 0.05 }}
-                className={`group relative rounded-[32px] overflow-hidden transition-all duration-300 ${
+                className={`group flex flex-col gap-2 sm:gap-3 rounded-[32px] overflow-hidden transition-all duration-300 ${
                   expandedPlayer === player.id ? 'glass p-6 ring-1 ring-white/10' : 'glass-dark p-4 border border-white/5'
-                } ${isFirst ? 'ring-2 ring-neon-yellow/30' : ''} ${isDanger ? 'ring-2 ring-neon-red/30 shadow-[0_0_20px_rgba(255,49,49,0.1)]' : ''} ${isAbscondedInMatch ? 'opacity-50' : ''}`}
+                } ${isFirst && !isExcludedTreat ? 'ring-2 ring-neon-yellow/30' : ''} ${isDanger ? 'ring-2 ring-neon-red/30 shadow-[0_0_20px_rgba(255,49,49,0.1)]' : ''} ${isExcludedTreat ? 'opacity-[0.42] grayscale border-white/[0.03]' : ''}`}
               >
-                {isFirst && (
-                  <div className="absolute top-2 right-4 flex gap-2">
-                    <span className="text-[7px] font-mono bg-neon-yellow/20 text-neon-yellow px-2 py-0.5 rounded-full uppercase font-black">Elite Zone</span>
-                    <Crown className="w-4 h-4 text-neon-yellow animate-pulse" />
+                {/* In-flow status row — avoids overlapping runs / rank on narrow viewports */}
+                {isExcludedTreat ? (
+                  <div className="flex w-full min-w-0 flex-col gap-1 border-b border-white/5 pb-2 sm:pb-2.5">
+                    <span className="inline-flex w-fit shrink-0 text-[7px] font-mono font-black uppercase bg-gray-600/30 text-gray-300 px-2 py-0.5 rounded-full">
+                      ABSCONDED
+                    </span>
+                    <p className="max-w-full text-left text-[9px] font-mono font-semibold uppercase leading-snug tracking-tight text-gray-500 sm:text-[10px]">
+                      Excluded from Treat competition
+                    </p>
                   </div>
-                )}
-                {isAbscondedInMatch && (
-                  <div className="absolute top-2 right-4 flex gap-2">
-                    <span className="text-[7px] font-mono bg-orange-500/20 text-orange-500 px-2 py-0.5 rounded-full uppercase font-black">ABSCONDED</span>
+                ) : isDanger ? (
+                  <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2 sm:pb-2.5">
+                    <span className="inline-flex shrink-0 text-[7px] font-mono bg-neon-red/20 text-neon-red px-2 py-0.5 rounded-full uppercase font-black">
+                      Treat Zone
+                    </span>
+                    <Gift className="h-4 w-4 shrink-0 text-neon-red animate-pulse" aria-hidden />
                   </div>
-                )}
-                {isDanger && !isAbscondedInMatch && (
-                  <div className="absolute top-2 right-4 flex gap-2">
-                    <span className="text-[7px] font-mono bg-neon-red/20 text-neon-red px-2 py-0.5 rounded-full uppercase font-black shrink-0">Treat Zone</span>
-                    <Gift className="w-4 h-4 text-neon-red animate-pulse" />
+                ) : isFirst && !isExcludedTreat ? (
+                  <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-2 sm:pb-2.5">
+                    <span className="inline-flex shrink-0 text-[7px] font-mono bg-neon-yellow/20 text-neon-yellow px-2 py-0.5 rounded-full uppercase font-black">
+                      Elite Zone
+                    </span>
+                    <Crown className="h-4 w-4 shrink-0 text-neon-yellow animate-pulse" aria-hidden />
                   </div>
-                )}
+                ) : null}
 
                 <div 
-                  className="flex items-center gap-4 cursor-pointer"
+                  className="flex w-full min-w-0 cursor-pointer flex-row flex-nowrap items-center gap-2 sm:gap-4"
                   onClick={() => setExpandedPlayer(expandedPlayer === player.id ? null : player.id)}
                 >
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-space font-black text-xl shadow-inner ${
-                    isFirst ? 'bg-neon-yellow text-black' : 
-                    index === 1 ? 'bg-gray-300 text-black' :
-                    index === 2 ? 'bg-orange-400 text-black' :
-                    isDanger ? 'bg-neon-red text-white shadow-[0_0_10px_rgba(255,49,49,0.5)]' : 'bg-white/5 text-white/50'
+                  <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-4">
+                  <div className={`h-11 w-11 shrink-0 rounded-2xl text-lg font-space font-black shadow-inner flex items-center justify-center sm:h-12 sm:w-12 sm:text-xl ${
+                    isExcludedTreat
+                      ? 'bg-white/5 text-white/25'
+                      : isFirst
+                        ? 'bg-neon-yellow text-black'
+                        : index === 1
+                          ? 'bg-gray-300 text-black'
+                          : index === 2
+                            ? 'bg-orange-400 text-black'
+                            : isDanger
+                              ? 'bg-neon-red text-white shadow-[0_0_10px_rgba(255,49,49,0.5)]'
+                              : 'bg-white/5 text-white/50'
                   }`}>
                     {index + 1}
                   </div>
 
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                       <h3 className="text-lg font-space font-bold truncate max-w-[120px]">{player.name}</h3>
-                       {isDanger && <span className="text-[8px] font-mono text-neon-red uppercase font-black px-2 py-0.5 bg-neon-red/10 rounded-full">Treat Sponsor</span>}
-                       {player.isCurrentlyBatting && <div className="w-1.5 h-1.5 rounded-full bg-neon-blue animate-pulse" />}
+                  <div className="min-w-0 flex-1 pr-1">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                       <h3 className={`min-w-0 truncate font-space text-base font-bold sm:text-lg ${isExcludedTreat ? 'text-white/50' : ''}`}>{player.name}</h3>
+                       {isDanger && <span className="shrink-0 text-[8px] font-mono text-neon-red uppercase font-black px-2 py-0.5 bg-neon-red/10 rounded-full">Treat Sponsor</span>}
+                       {player.isCurrentlyBatting && <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-neon-blue animate-pulse" />}
                     </div>
                     <div className="flex flex-col gap-0.5">
                       <div className="flex items-center gap-2">
@@ -169,18 +193,20 @@ export default function Leaderboard() {
                       </div>
                     </div>
                   </div>
-
-                  <div className="text-right">
-                    <p className={`text-2xl font-space font-black leading-none ${isFirst ? 'text-neon-yellow' : 'text-white'}`}>
-                      {player.displayRuns}
-                    </p>
-                    <p className="text-[8px] font-mono text-gray-500 uppercase mt-0.5">
-                       {activeMatch ? 'Live' : 'Total'}
-                    </p>
                   </div>
 
-                  <div className="ml-2">
-                    {expandedPlayer === player.id ? <ChevronUp className="w-4 h-4 text-gray-600" /> : <ChevronDown className="w-4 h-4 text-gray-600" />}
+                  <div className="ml-auto flex shrink-0 flex-row items-center gap-2 sm:gap-2.5">
+                    <div className="text-right">
+                      <p className={`text-2xl font-space font-black leading-none tabular-nums ${isFirst ? 'text-neon-yellow' : 'text-white'}`}>
+                        {player.displayRuns}
+                      </p>
+                      <p className="mt-0.5 text-[8px] font-mono uppercase text-gray-500">
+                         {activeMatch ? 'Live' : 'Total'}
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center self-center" aria-hidden>
+                      {expandedPlayer === player.id ? <ChevronUp className="h-4 w-4 text-gray-600" /> : <ChevronDown className="h-4 w-4 text-gray-600" />}
+                    </div>
                   </div>
                 </div>
 
@@ -224,21 +250,38 @@ export default function Leaderboard() {
                           </div>
                         )}
 
-                        {!isDanger && !isFirst && (
+                        {isExcludedTreat && (
+                          <div className="p-4 bg-white/5 border border-white/10 rounded-2xl text-center">
+                            <p className="text-gray-500 font-mono text-[8px] uppercase font-black mb-1">ABSCONDED</p>
+                            <p className="text-[10px] text-gray-500 italic leading-tight">
+                              Excluded from Treat competition — visible for overall ranking only.
+                            </p>
+                          </div>
+                        )}
+
+                        {!isExcludedTreat && !isDanger && !isFirst && lastActive && (
                           <div className="p-4 bg-neon-green/10 border border-neon-green/20 rounded-2xl text-center">
                              <p className="text-neon-green font-mono text-[8px] uppercase font-black mb-1">Safe Zone</p>
                              <p className="text-[10px] text-white/50 italic leading-tight">
-                               Currently safe. Gap to Treat Zone: {player.displayRuns - sortedPlayersWithLive[sortedPlayersWithLive.length-1].displayRuns} runs.
+                               Currently safe. Gap to active Treat floor ({lastActive.name}): {player.displayRuns - lastActive.displayRuns} runs.
                              </p>
                           </div>
                         )}
                         
-                        {isDanger && (
+                        {!isExcludedTreat && isDanger && treatActiveSorted.length >= 2 && (
                           <div className="p-4 rounded-2xl bg-neon-red/10 border border-neon-red/20 text-center">
                              <AlertCircle className="w-4 h-4 text-neon-red mx-auto mb-2" />
                              <p className="text-neon-red font-mono text-[10px] uppercase font-black mb-1">Treat survival</p>
                              <p className="text-[10px] text-white/50 italic leading-tight">
-                               Gap to {sortedPlayersWithLive[sortedPlayersWithLive.length-2].name}: {sortedPlayersWithLive[sortedPlayersWithLive.length-2].displayRuns - player.displayRuns} runs. Needs {sortedPlayersWithLive[sortedPlayersWithLive.length-2].displayRuns - player.displayRuns + 1} to escape the Treat Zone!
+                               {(() => {
+                                 const nextAbove = treatActiveSorted[treatActiveSorted.length - 2]!;
+                                 const gap = nextAbove.displayRuns - player.displayRuns;
+                                 return (
+                                   <>
+                                     Gap to {nextAbove.name}: {gap} runs. Needs {gap + 1} to escape the Treat Zone (active players only).
+                                   </>
+                                 );
+                               })()}
                              </p>
                           </div>
                         )}

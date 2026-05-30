@@ -11,7 +11,9 @@ interface OrderRevealProps {
 }
 
 export default function OrderReveal({ tournament, onConfirm }: OrderRevealProps) {
-  const [abscondedById, setAbscondedById] = useState<Record<string, boolean>>({});
+  const [abscondedById, setAbscondedById] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(tournament.players.filter((p) => p.seriesAbsconded).map((p) => [p.id, true])),
+  );
   const lastMatch = tournament.matches[tournament.matches.length - 1];
 
   const toggleAbsconded = (id: string) => {
@@ -105,7 +107,7 @@ export default function OrderReveal({ tournament, onConfirm }: OrderRevealProps)
             Generated from previous match performance
           </p>
           <p className="mx-auto mt-2 max-w-sm font-mono text-[9px] uppercase tracking-widest text-gray-600 sm:mt-3">
-            Tag absconders before play — if the opener is out, the next playing batter opens.
+            Series absconded default to Out until you mark In — playing. If the listed opener is Out, the next In batter opens.
           </p>
         </motion.div>
 
