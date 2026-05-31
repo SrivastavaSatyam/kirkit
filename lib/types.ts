@@ -29,6 +29,13 @@ export interface Player {
   seriesAbsconded?: boolean;
   /** 1-based series match number when marked absconded (for results copy) */
   abscondedAtMatchNumber?: number;
+  /** Dismissal details recorded when a batter is out */
+  dismissal?: {
+    bowlerId: string;
+    bowlerName: string;
+    fielderId?: string;
+    fielderName?: string;
+  };
 }
 
 export interface Match {

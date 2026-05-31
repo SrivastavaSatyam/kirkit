@@ -77,6 +77,7 @@ interface GameContextType {
   addPlayerToSeries: (name: string, nickname?: string) => void;
   togglePlayerAbsconded: (playerId: string) => void;
   endSeries: () => void;
+  recordDismissal: (bowlerId: string, fielderId?: string) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -456,23 +457,46 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setActiveMatch(null);
   };
 
+  const recordDismissal = (bowlerId: string, fielderId?: string) => {
+    setActiveMatch(prev => {
+      if (!prev) return prev;
+      const currentPlayer = prev.players[prev.currentBatterIndex];
+      if (!currentPlayer) return prev;
+      const bowler = prev.players.find(p => p.id === bowlerId);
+      const fielder = fielderId ? prev.players.find(p => p.id === fielderId) : undefined;
+      const newPlayers = prev.players.map((p, i) => {
+        if (i !== prev.currentBatterIndex) return p;
+        return {
+          ...p,
+          dismissal: {
+            bowlerId,
+            bowlerName: bowler?.name ?? '',
+            ...(fielderId && fielder ? { fielderId, fielderName: fielder.name } : {}),
+          },
+        };
+      });
+      return { ...prev, players: newPlayers };
+    });
+  };
+
   return (
-    <GameContext.Provider value={{ 
+    <GameContext.Provider value={{
       gameHydrated,
-      tournament, 
-      activeMatch, 
-      startTournament, 
-      startNewMatch, 
-      recordBall, 
-      undoBall, 
-      nextBatter, 
-      closeMatch, 
+      tournament,
+      activeMatch,
+      startTournament,
+      startNewMatch,
+      recordBall,
+      undoBall,
+      nextBatter,
+      closeMatch,
       discardActiveMatch,
       resetTournament,
       reorderPlayers,
       addPlayerToSeries,
       togglePlayerAbsconded,
-      endSeries
+      endSeries,
+      recordDismissal,
     }}>
       {children}
     </GameContext.Provider>
