@@ -2,10 +2,11 @@
 
 import React, { useMemo, useEffect, useState } from 'react';
 import { motion } from 'motion/react';
-import { Plus, Trophy, History, Zap, AlertTriangle, Play, Users } from 'lucide-react';
+import { Plus, Trophy, History, Zap, AlertTriangle, Play, Users, Star } from 'lucide-react';
 import Link from 'next/link';
 import { useGame } from '@/lib/store';
-import { liveScoreMapFromMatch, partyDangerPlayer, totalSeriesRuns } from '@/lib/standings';
+import { partyDangerByMvp } from '@/lib/standings';
+import { computeSeriesMvp } from '@/lib/mvp';
 import { avatarImgSrc } from '@/lib/default-squad';
 import { AvatarImg } from '@/components/AvatarImg';
 
@@ -16,19 +17,21 @@ export default function Dashboard() {
     void Promise.resolve().then(() => setMotionReady(true));
   }, []);
 
-  const liveMap = useMemo(() => liveScoreMapFromMatch(activeMatch), [activeMatch]);
-
-  const lineupMatch = activeMatch ?? tournament?.matches.at(-1) ?? null;
+  const mvpById = useMemo(() => {
+    if (!tournament) return new Map<string, number>();
+    const entries = computeSeriesMvp(tournament.matches, tournament.players, activeMatch);
+    return new Map(entries.map(e => [e.playerId, e.totalMvpPoints]));
+  }, [tournament, activeMatch]);
 
   const dangerPlayer = useMemo(
-    () => (tournament ? partyDangerPlayer(tournament.players, liveMap, lineupMatch) : undefined),
-    [tournament, liveMap, lineupMatch]
+    () => (tournament ? partyDangerByMvp(tournament.players, mvpById) : undefined),
+    [tournament, mvpById]
   );
 
   const dangerDisplayTotal = useMemo(() => {
     if (!dangerPlayer) return 0;
-    return totalSeriesRuns(dangerPlayer, liveMap?.get(dangerPlayer.id));
-  }, [dangerPlayer, liveMap]);
+    return mvpById.get(dangerPlayer.id) ?? 0;
+  }, [dangerPlayer, mvpById]);
 
   return (
     <div className="min-h-screen bg-black pb-32">
@@ -70,7 +73,7 @@ export default function Dashboard() {
                 </div>
              </motion.button>
           </Link>
-          
+
           <div className="mt-8 space-y-4">
              <p className="text-[10px] font-mono text-gray-500 uppercase tracking-widest px-2">Legendary Records</p>
              <div className="grid grid-cols-2 gap-4">
@@ -140,8 +143,8 @@ export default function Dashboard() {
              </Link>
            )}
 
-           {/* Treat Danger Zone Widget */}
-           {dangerPlayer && (
+           {/* Treat Danger Zone Widget — only after at least one match */}
+           {dangerPlayer && tournament.matches.length > 0 && (
              <motion.div 
                initial={false}
                animate={motionReady ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.9 }}
@@ -178,7 +181,7 @@ export default function Dashboard() {
                               className="h-full bg-neon-red shadow-[0_0_8px_rgba(255,49,49,0.5)]"
                             />
                          </div>
-                         <span className="text-xs font-mono text-neon-red font-bold">{dangerDisplayTotal} Tot</span>
+                         <span className="text-xs font-mono text-neon-red font-bold">{dangerDisplayTotal.toFixed(2)} MVP</span>
                       </div>
                    </div>
                 </div>
@@ -200,18 +203,30 @@ export default function Dashboard() {
                    </div>
                 </div>
               </Link>
-              <button 
+              <Link href="/mvp" className="block">
+                <div className="glass rounded-[32px] p-6 border-neon-yellow/10 h-full relative overflow-hidden">
+                   <Star className="w-6 h-6 text-neon-yellow mb-3" />
+                   <p className="text-[10px] text-gray-400 font-mono uppercase">All-Round</p>
+                   <p className="font-space font-bold mt-1">MVP Board</p>
+                   <div className="absolute -bottom-2 -right-2 opacity-5 scale-150">
+                      <Trophy className="w-12 h-12 text-neon-yellow" />
+                   </div>
+                </div>
+              </Link>
+              <button
                 onClick={() => {
                   if (confirm('Permanently reset all tournament data and matches? This cannot be undone.')) {
                     resetTournament();
                   }
-                }} 
-                className="block text-left w-full h-full"
+                }}
+                className="block text-left w-full col-span-2"
               >
-                <div className="glass rounded-[32px] p-6 border-white/5 h-full opacity-60 hover:opacity-100 transition-opacity">
-                   <History className="w-6 h-6 text-gray-400 mb-3" />
-                   <p className="text-[10px] text-gray-400 font-mono uppercase">End Series</p>
-                   <p className="font-space font-bold mt-1 text-neon-red">Reset All</p>
+                <div className="glass rounded-[32px] p-5 border-white/5 w-full opacity-60 hover:opacity-100 transition-opacity flex items-center gap-3">
+                   <History className="w-5 h-5 text-gray-400 shrink-0" />
+                   <div>
+                     <p className="text-[10px] text-gray-400 font-mono uppercase">End Series</p>
+                     <p className="font-space font-bold text-sm text-neon-red">Reset All Data</p>
+                   </div>
                 </div>
               </button>
            </div>

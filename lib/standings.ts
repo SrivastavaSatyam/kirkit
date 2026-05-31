@@ -121,3 +121,45 @@ export function partyDangerPlayer(
   if (!active.length) return undefined;
   return resolvePartyBottomPlayer(active, live, orderMatch ?? null);
 }
+
+// ── MVP-based Treat helpers ───────────────────────────────────────────────────
+
+/** Sort active players by MVP points ascending (lowest MVP = treat danger first) */
+export function sortedByMvpWorstFirst(players: Player[], mvpById: Map<string, number>): Player[] {
+  return [...players].sort((a, b) => {
+    const ma = mvpById.get(a.id) ?? 0;
+    const mb = mvpById.get(b.id) ?? 0;
+    if (ma !== mb) return ma - mb;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+  });
+}
+
+/** Sort active players by MVP points descending (highest MVP = safest first) */
+export function sortedByMvpBestFirst(players: Player[], mvpById: Map<string, number>): Player[] {
+  return [...players].sort((a, b) => {
+    const ma = mvpById.get(a.id) ?? 0;
+    const mb = mvpById.get(b.id) ?? 0;
+    if (ma !== mb) return mb - ma;
+    return b.name.localeCompare(a.name, undefined, { sensitivity: 'base' });
+  });
+}
+
+/** Lowest-MVP active (non-absconded) player — the Treat danger player */
+export function partyDangerByMvp(
+  players: Player[],
+  mvpById: Map<string, number>,
+): Player | undefined {
+  const active = treatActivePlayers(players);
+  if (!active.length) return undefined;
+  return sortedByMvpWorstFirst(active, mvpById)[0];
+}
+
+/** Lowest-MVP active player — the Treat sponsor at series end */
+export function partySponsorByMvp(
+  tournament: Tournament,
+  mvpById: Map<string, number>,
+): Player | undefined {
+  const active = treatActivePlayers(tournament.players);
+  if (!active.length) return undefined;
+  return sortedByMvpWorstFirst(active, mvpById)[0];
+}
