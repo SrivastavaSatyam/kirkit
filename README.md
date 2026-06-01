@@ -1,20 +1,63 @@
 <div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
+  <img src="public/kirkit.png"  alt="KirKit" width="200" />
 </div>
 
-# Run and deploy your AI Studio app
+# KirKit — Boundary League
 
-This contains everything you need to run your app locally.
+A gully cricket scoring and series tracker built with Next.js 15, React 19, and TypeScript.
 
-View your app in AI Studio: https://ai.studio/apps/45628ee3-caca-4b07-8d25-9b4bbd39ebae
+## Features
 
-## Run Locally
+- **Live Scoring** — Ball-by-ball tracking (4s, 6s, dots, wides, no-balls, wickets)
+- **Series Management** — Multi-match tournament with cumulative standings
+- **MVP System** — Proportional batting, bowling, and fielding points across the series
+- **Batting Order** — Auto-generated order based on cumulative MVP rankings
+- **Treat Zone** — Tracks the lowest-ranked player who owes the group a treat
+- **Escape Target** — Live run targets during innings so every batter knows what to chase
+- **Dismissal Tracking** — Records bowler and fielder for every wicket
 
-**Prerequisites:**  Node.js
+## Tech Stack
 
+- **Framework** — Next.js 15 (App Router)
+- **UI** — Tailwind CSS v4, Framer Motion, Lucide icons
+- **State** — React Context + localStorage persistence
+- **Language** — TypeScript
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Getting Started
+
+**Prerequisites:** Node.js 18+
+
+```bash
+# Install dependencies
+npm install
+
+# Start the dev server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+## Project Structure
+
+```
+app/                  Next.js App Router pages
+├── dashboard/        Home screen
+├── match/
+│   ├── create/       New match setup
+│   └── scoring/      Live ball-by-ball scoring
+├── leaderboard/      Series standings (MVP-ranked)
+├── mvp/              Full MVP leaderboard
+└── results/          End-of-series results
+
+components/           React components
+lib/                  Pure logic (types, store, MVP engine, escape target, standings)
+```
+
+## Scripts
+
+```bash
+npm run dev      # Development server
+npm run build    # Production build
+npm run start    # Start production server
+npm run lint     # ESLint
+```
