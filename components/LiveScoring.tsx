@@ -3,12 +3,8 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useGame } from '@/lib/store';
-import {
-  liveScoreMapFromMatch,
-  sortedByPartyBestFirst,
-  sortedByPartyWorstFirst,
-  totalSeriesRuns,
-} from '@/lib/standings';
+import { liveScoreMapFromMatch, sortedByPartyBestFirst, totalSeriesRuns } from '@/lib/standings';
+import { computeEscapeTarget } from '@/lib/escape-target';
 import { MAX_LEGAL_BALLS, calculatePlayerStats, type Match, type Tournament } from '@/lib/types';
 import { Trophy, Undo, ChevronRight, ChevronLeft, Zap, Target, AlertCircle, TrendingDown, Flame, UserPlus, Settings, X, Plus, Info } from 'lucide-react';
 import { useRouter } from 'next/navigation';
@@ -57,7 +53,7 @@ function BattingQueueStrip({ activeMatch, tournament, prevScoreById, maxRankBoos
                   : p.status === 'completed'
                     ? 'bg-gray-900/50 border-white/5 text-gray-500 opacity-50'
                     : p.status === 'absconded'
-                      ? 'bg-neon-red/10 border-neon-red/20 text-neon-red/50 opacity-40 grayscale'
+                      ? 'bg-gray-800/50 border-white/10 text-gray-500 opacity-45 grayscale'
                       : 'glass border-white/10 text-white/70'
               } ${expanded ? 'ring-1 ring-neon-yellow/40 border-neon-yellow/30' : ''}`}
             >
@@ -113,6 +109,7 @@ export default function LiveScoring() {
     addPlayerToSeries,
     togglePlayerAbsconded,
     endSeries,
+    recordDismissal,
   } = useGame();
   const router = useRouter();
   const [showCelebration, setShowCelebration] = useState<string | null>(null);
@@ -123,6 +120,9 @@ export default function LiveScoring() {
   const [newPlayerName, setNewPlayerName] = useState('');
   const [newPlayerNickname, setNewPlayerNickname] = useState('');
   const [showNextBatterOverlay, setShowNextBatterOverlay] = useState<{name: string, runsNeeded?: number} | null>(null);
+  const [dismissalBowlerId, setDismissalBowlerId] = useState<string | null>(null);
+  const [dismissalFielderId, setDismissalFielderId] = useState<string | null>(null);
+  const [dismissalSaved, setDismissalSaved] = useState(false);
   const [showHalfOver, setShowHalfOver] = useState(false);
   /** Peak rank improvement (match-start → now); never decreases during this match */
   const [maxRankBoostById, setMaxRankBoostById] = useState<Record<string, number>>({});
@@ -154,59 +154,16 @@ export default function LiveScoring() {
     }
   };
 
-  const survivalData = useMemo(() => {
-    if (!tournament || !activeMatch) return null;
+  const isLastBatter = useMemo(() => {
+    if (!activeMatch) return false;
+    const currentIdx = activeMatch.currentBatterIndex;
+    return !activeMatch.players.some((p, i) => i > currentIdx && p.status === 'pending');
+  }, [activeMatch]);
 
-    const currentPlayer = activeMatch.players[activeMatch.currentBatterIndex];
-    if (!currentPlayer) return null;
-
-    const liveMap = liveScoreMapFromMatch(activeMatch);
-    const sortedPlayers = sortedByPartyWorstFirst(tournament.players, liveMap);
-    const lowestPlayer = sortedPlayers[0];
-    const tpCurrent = tournament.players.find((p) => p.id === currentPlayer.id);
-    const totalCumulative = totalSeriesRuns(tpCurrent ?? currentPlayer, liveMap?.get(currentPlayer.id));
-
-    const seriesTotal = (p: (typeof tournament.players)[number]) =>
-      totalSeriesRuns(p, liveMap?.get(p.id));
-    const minRuns = seriesTotal(lowestPlayer);
-    /** Party danger = tied for lowest series total (must go strictly above min to leave the bottom tier). */
-    const isCurrentLast = totalCumulative === minRuns;
-
-    if (sortedPlayers.length < 2) {
-      return {
-        isCurrentLast: sortedPlayers.length === 1 && isCurrentLast,
-        runsNeeded: 0,
-        safeTarget: 0,
-        totalCumulative,
-        lowestName: lowestPlayer.name,
-      };
-    }
-
-    const countAtMinimum = sortedPlayers.filter((p) => seriesTotal(p) === minRuns).length;
-    const tiedForMinimum = countAtMinimum >= 2;
-
-    let safeTarget = 0;
-    let runsNeeded = 0;
-
-    if (isCurrentLast) {
-      if (tiedForMinimum) {
-        safeTarget = minRuns + 1;
-        runsNeeded = Math.max(0, safeTarget - totalCumulative);
-      } else {
-        const nextPlayer = sortedPlayers[1];
-        safeTarget = seriesTotal(nextPlayer) + 1;
-        runsNeeded = Math.max(0, safeTarget - totalCumulative);
-      }
-    }
-
-    return {
-      isCurrentLast,
-      runsNeeded,
-      safeTarget,
-      totalCumulative,
-      lowestName: lowestPlayer.name,
-    };
-  }, [tournament, activeMatch]);
+  const escapeTarget = useMemo(
+    () => computeEscapeTarget(tournament, activeMatch, isLastBatter),
+    [tournament, activeMatch, isLastBatter],
+  );
 
   const prevScoreById = useMemo(() => {
     if (!tournament?.matches?.length) return {};
@@ -297,6 +254,13 @@ export default function LiveScoring() {
     }
   }, [activeMatch]);
 
+  // Reset dismissal selection when batter changes
+  useEffect(() => {
+    setDismissalBowlerId(null);
+    setDismissalFielderId(null);
+    setDismissalSaved(false);
+  }, [activeMatch?.currentBatterIndex]);
+
   const matchIsPristine = useMemo(() => {
     if (!activeMatch) return false;
     return activeMatch.players.every((p) => p.history.length === 0);
@@ -313,6 +277,20 @@ export default function LiveScoring() {
 
   const currentPlayer = activeMatch.players[activeMatch.currentBatterIndex];
   const isBatterDone = currentPlayer?.status === 'completed';
+  const lastBall = currentPlayer?.history[currentPlayer.history.length - 1];
+  const wasDismissed = lastBall?.type === 'OUT';
+  const showDismissalPanel = isBatterDone && wasDismissed && !dismissalSaved;
+
+  // Players eligible as bowler/fielder: all except the current batter and absconded
+  const dismissalCandidates = activeMatch.players.filter(
+    (p) => p.id !== currentPlayer?.id && p.status !== 'absconded'
+  );
+
+  const handleDismissalConfirm = () => {
+    if (!dismissalBowlerId || !dismissalFielderId) return;
+    recordDismissal(dismissalBowlerId, dismissalFielderId);
+    setDismissalSaved(true);
+  };
 
   const handleAddPlayer = () => {
     if (newPlayerName.trim()) {
@@ -408,39 +386,131 @@ export default function LiveScoring() {
 
       <div className="relative z-0 flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto">
       <AnimatePresence>
-        {survivalData && (
-          <motion.div 
-            initial={{ y: -50, opacity: 0 }}
+        {escapeTarget && (
+          <motion.div
+            key={`escape-${escapeTarget.mode}-${escapeTarget.currentRank}`}
+            initial={{ y: -40, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -40, opacity: 0 }}
             className="px-4 pb-2 sm:px-6"
           >
-            <div className={`rounded-xl p-3 flex items-center justify-between border ${
-              survivalData.isCurrentLast 
-                ? 'bg-neon-red/10 border-neon-red/30 shadow-[0_0_15px_rgba(255,49,49,0.2)]' 
-                : 'bg-neon-green/10 border-neon-green/30'
-            }`}>
-              <div className="flex items-center gap-2">
-                {survivalData.isCurrentLast ? (
-                  <TrendingDown className="w-4 h-4 text-neon-red animate-pulse" />
-                ) : (
-                  <Flame className="w-4 h-4 text-neon-green animate-bounce" />
+
+            {/* ── Rank #1 — Leading ── */}
+            {escapeTarget.mode === 'leading' && (
+              <div className="rounded-xl border border-neon-green/30 bg-neon-green/10 p-3 flex items-center gap-3">
+                <Flame className="w-4 h-4 text-neon-green animate-bounce shrink-0" />
+                <div className="flex-1">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-neon-green font-black">🔥 Leading — Rank #1</p>
+                  <p className="text-xs font-space font-bold text-white/70">Safe at the top. Keep scoring.</p>
+                </div>
+                {escapeTarget.isClutchMode && (
+                  <span className="text-[8px] font-mono text-neon-yellow bg-neon-yellow/10 px-2 py-1 rounded-full font-black uppercase border border-neon-yellow/20">Last Bat</span>
                 )}
-                <div>
-                   <p className="text-[10px] font-mono uppercase tracking-widest text-gray-400">
-                     {survivalData.isCurrentLast ? 'Treat Danger Zone' : 'Survival Status'}
-                   </p>
-                   <p className="text-xs font-space font-bold">
-                     {survivalData.isCurrentLast 
-                       ? `Need ${survivalData.runsNeeded} to survive` 
-                       : 'Currently Safe 🔥'}
-                   </p>
+              </div>
+            )}
+
+            {/* ── Middle ranks — chasing the leader ── */}
+            {escapeTarget.mode === 'chasing' && !escapeTarget.isSafe && (
+              <div className={`rounded-xl border p-3 ${
+                escapeTarget.isClutchMode
+                  ? 'border-neon-yellow/40 bg-neon-yellow/10 shadow-[0_0_12px_rgba(255,215,0,0.1)]'
+                  : 'border-neon-blue/30 bg-neon-blue/10'
+              }`}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Zap className={`w-4 h-4 ${escapeTarget.isClutchMode ? 'text-neon-yellow animate-pulse' : 'text-neon-blue'}`} />
+                  <p className={`text-[10px] font-mono uppercase tracking-widest font-black ${escapeTarget.isClutchMode ? 'text-neon-yellow' : 'text-neon-blue'}`}>
+                    {escapeTarget.isClutchMode ? '🔥 Clutch Mode' : 'Chase the Top'}
+                  </p>
+                  <span className="ml-auto text-[9px] font-mono text-gray-500">Rank #{escapeTarget.currentRank}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[9px] font-mono text-gray-500 uppercase">Leader</p>
+                    <p className="text-sm font-space font-bold">{escapeTarget.targetPlayerName} <span className="text-gray-500 text-[10px]">(#1)</span></p>
+                  </div>
+                  <div className={`text-right ${escapeTarget.isClutchMode ? 'flex items-end gap-4' : ''}`}>
+                    <div>
+                      <p className="text-[9px] font-mono text-gray-500 uppercase">Runs to Lead</p>
+                      <p className={`text-2xl font-space font-black ${escapeTarget.isClutchMode ? 'text-neon-yellow' : 'text-neon-blue'}`}>{escapeTarget.remainingRuns}</p>
+                    </div>
+                    {escapeTarget.isClutchMode && (
+                      <div>
+                        <p className="text-[9px] font-mono text-gray-500 uppercase">Balls Left</p>
+                        <p className="text-2xl font-space font-black text-neon-red">{escapeTarget.ballsRemaining}</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-[10px] font-mono text-gray-500 uppercase">Cumulative</p>
-                <p className="text-sm font-space font-bold">{survivalData.totalCumulative}</p>
+            )}
+
+            {/* ── Middle ranks — already reached top ── */}
+            {escapeTarget.mode === 'chasing' && escapeTarget.isSafe && (
+              <div className="rounded-xl border border-neon-green/30 bg-neon-green/10 p-3 flex items-center gap-3">
+                <Flame className="w-4 h-4 text-neon-green animate-bounce shrink-0" />
+                <div className="flex-1">
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-neon-green font-black">🔥 Taking the Lead!</p>
+                  <p className="text-xs font-space font-bold text-white/70">Overtaking {escapeTarget.targetPlayerName}</p>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* ── Last rank — treat danger zone ── */}
+            {escapeTarget.mode === 'danger' && !escapeTarget.isSafe && (
+              <div className={`rounded-xl border p-3 ${
+                escapeTarget.isClutchMode
+                  ? 'border-neon-yellow/40 bg-neon-yellow/10 shadow-[0_0_15px_rgba(255,215,0,0.15)]'
+                  : 'border-neon-red/30 bg-neon-red/10 shadow-[0_0_12px_rgba(255,49,49,0.15)]'
+              }`}>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <TrendingDown className={`w-4 h-4 animate-pulse ${escapeTarget.isClutchMode ? 'text-neon-yellow' : 'text-neon-red'}`} />
+                  <p className={`text-[10px] font-mono uppercase tracking-widest font-black ${escapeTarget.isClutchMode ? 'text-neon-yellow' : 'text-neon-red'}`}>
+                    {escapeTarget.isClutchMode ? '🔥 Clutch Mode — Treat Danger' : '⚠ Treat Danger Zone'}
+                  </p>
+                  <span className="ml-auto text-[9px] font-mono text-gray-500">Rank #{escapeTarget.currentRank}/{escapeTarget.totalPlayers}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-[9px] font-mono text-gray-500 uppercase">Escape Target</p>
+                    <p className="text-sm font-space font-bold">{escapeTarget.targetPlayerName} <span className="text-gray-500 text-[10px]">(#{escapeTarget.targetRank})</span></p>
+                  </div>
+                  <div className={`text-right ${escapeTarget.isClutchMode ? 'flex items-end gap-4' : ''}`}>
+                    <div>
+                      <p className="text-[9px] font-mono text-gray-500 uppercase">Runs to Escape</p>
+                      <p className={`text-2xl font-space font-black ${escapeTarget.isClutchMode ? 'text-neon-yellow' : 'text-neon-red'}`}>{escapeTarget.remainingRuns}</p>
+                    </div>
+                    {escapeTarget.isClutchMode && (
+                      <div>
+                        <p className="text-[9px] font-mono text-gray-500 uppercase">Balls Left</p>
+                        <p className="text-2xl font-space font-black text-neon-red">{escapeTarget.ballsRemaining}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── Last rank — escaped danger, show ladder ── */}
+            {escapeTarget.mode === 'danger' && escapeTarget.isSafe && (
+              <div className="rounded-xl border border-neon-green/30 bg-neon-green/10 p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Flame className="w-4 h-4 text-neon-green animate-bounce" />
+                  <p className="text-[10px] font-mono uppercase tracking-widest text-neon-green font-black">🔥 Escaped Treat Zone!</p>
+                  <span className="ml-auto text-[9px] font-mono text-gray-500">Proj. Rank #{escapeTarget.targetRank}</span>
+                </div>
+                {escapeTarget.nextLadderTarget ? (
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-space font-bold">
+                      Next: {escapeTarget.nextLadderTarget.name} <span className="text-gray-500 text-[9px]">(#{escapeTarget.nextLadderTarget.rank})</span>
+                    </p>
+                    <span className="text-sm font-space font-black text-neon-yellow">{escapeTarget.nextLadderTarget.runsNeeded} more</span>
+                  </div>
+                ) : (
+                  <p className="text-[10px] font-mono text-gray-400">Climbed to safety — keep going!</p>
+                )}
+              </div>
+            )}
+
           </motion.div>
         )}
       </AnimatePresence>
@@ -456,7 +526,7 @@ export default function LiveScoring() {
       {/* Main Score Area */}
       <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-4 pb-3 pt-2 sm:px-6">
         <motion.div 
-          key={currentPlayer.score}
+          key={`${currentPlayer.id}-${currentPlayer.score}-${currentPlayer.history.length}`}
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           className="relative text-center w-full max-w-[min(100vw-2rem,28rem)]"
@@ -523,8 +593,112 @@ export default function LiveScoring() {
               <div className="glass rounded-[32px] p-6 text-center border-neon-yellow/30 relative">
                 <AlertCircle className="w-8 h-8 text-neon-yellow mx-auto mb-3" />
                 <h4 className="text-xl font-space font-bold mb-1">Innings Over!</h4>
-                <p className="text-sm text-gray-400 mb-6">Total Match Score: {currentPlayer.score}</p>
-                
+                <p className="text-sm text-gray-400 mb-4">Total Match Score: {currentPlayer.score}</p>
+
+                {/* Dismissal Details Panel */}
+                {showDismissalPanel && (
+                  <div className="mb-5 text-left">
+                    <div className="border border-neon-red/20 rounded-2xl p-4 bg-neon-red/5 space-y-4">
+                      <p className="text-[10px] font-mono uppercase tracking-widest text-neon-red text-center">Wicket Details</p>
+
+                      {/* Bowler Selection */}
+                      <div>
+                        <p className="text-[9px] font-mono uppercase tracking-widest text-gray-500 mb-2">Select Bowler</p>
+                        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                          {dismissalCandidates.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => setDismissalBowlerId((prev) => prev === p.id ? null : p.id)}
+                              className={`flex flex-col items-center gap-1 shrink-0 px-3 py-2 rounded-xl border transition-all active:scale-95 ${
+                                dismissalBowlerId === p.id
+                                  ? 'bg-neon-red/20 border-neon-red text-neon-red shadow-[0_0_12px_rgba(255,49,49,0.25)]'
+                                  : 'glass border-white/10 text-white/70'
+                              }`}
+                            >
+                              <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-800 border border-white/10 shrink-0">
+                                <AvatarImg
+                                  src={avatarImgSrc(p)}
+                                  alt={p.name}
+                                  width={32}
+                                  height={32}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                              <span className="text-[9px] font-space font-bold whitespace-nowrap max-w-[52px] truncate">{p.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Fielder Selection */}
+                      <div>
+                        <p className="text-[9px] font-mono uppercase tracking-widest text-gray-500 mb-2">Select Fielder</p>
+                        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                          {dismissalCandidates.map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => setDismissalFielderId((prev) => prev === p.id ? null : p.id)}
+                              className={`flex flex-col items-center gap-1 shrink-0 px-3 py-2 rounded-xl border transition-all active:scale-95 ${
+                                dismissalFielderId === p.id
+                                  ? 'bg-neon-blue/20 border-neon-blue text-neon-blue shadow-[0_0_12px_rgba(0,243,255,0.25)]'
+                                  : 'glass border-white/10 text-white/70'
+                              }`}
+                            >
+                              <div className="w-8 h-8 rounded-lg overflow-hidden bg-gray-800 border border-white/10 shrink-0">
+                                <AvatarImg
+                                  src={avatarImgSrc(p)}
+                                  alt={p.name}
+                                  width={32}
+                                  height={32}
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                              <span className="text-[9px] font-space font-bold whitespace-nowrap max-w-[52px] truncate">{p.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Save */}
+                      <div className="flex gap-2 pt-1">
+                        <button
+                          type="button"
+                          onClick={handleDismissalConfirm}
+                          disabled={!dismissalBowlerId || !dismissalFielderId}
+                          className="flex-1 py-2.5 rounded-xl text-[10px] font-space font-black uppercase tracking-tight transition-all disabled:opacity-40 disabled:cursor-not-allowed bg-neon-red/80 text-white"
+                        >
+                          {dismissalBowlerId && dismissalFielderId ? 'Save Details' : 'Select Bowler & Fielder'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Saved dismissal summary */}
+                {isBatterDone && wasDismissed && dismissalSaved && currentPlayer.dismissal && (
+                  <div className="mb-4 text-left">
+                    <div className="border border-neon-red/20 rounded-2xl px-4 py-3 bg-neon-red/5 flex items-center justify-between gap-3">
+                      <div className="text-[10px] font-mono text-gray-400 space-y-0.5 flex-1 min-w-0">
+                        {currentPlayer.dismissal.bowlerName && (
+                          <p>🎯 <span className="text-white/50">b.</span> <span className="text-white/80 font-bold">{currentPlayer.dismissal.bowlerName}</span></p>
+                        )}
+                        {currentPlayer.dismissal.fielderName && (
+                          <p>🤲 <span className="text-white/50">c.</span> <span className="text-white/80 font-bold">{currentPlayer.dismissal.fielderName}</span></p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDismissalSaved(false)}
+                        className="shrink-0 px-3 py-1.5 glass rounded-xl text-[9px] font-space font-black uppercase tracking-tight text-gray-400 border border-white/10 active:scale-95 transition-transform"
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* Dynamic Action Panel */}
                 <div className="grid grid-cols-2 gap-3 mb-3">
                   <button 
@@ -543,29 +717,32 @@ export default function LiveScoring() {
 
                 <div className="grid grid-cols-2 gap-3">
                   {activeMatch.players.some(p => p.status === 'pending') ? (
-                    <button 
+                    <button
                       onClick={handleNextBatter}
-                      className="col-span-2 py-5 bg-neon-green text-black rounded-2xl text-sm font-space font-black uppercase italic flex items-center justify-center gap-2 shadow-[0_10px_30px_rgba(57,255,20,0.3)] animate-pulse"
+                      disabled={wasDismissed && !dismissalSaved}
+                      className="col-span-2 py-5 bg-neon-green text-black rounded-2xl text-sm font-space font-black uppercase italic flex items-center justify-center gap-2 shadow-[0_10px_30px_rgba(57,255,20,0.3)] animate-pulse disabled:opacity-40 disabled:cursor-not-allowed disabled:animate-none disabled:shadow-none transition-all"
                     >
                       Next Batter <ChevronRight className="w-5 h-5" />
                     </button>
                   ) : (
                     <>
-                      <button 
+                      <button
                         onClick={() => {
                           closeMatch();
                           router.push('/dashboard');
                         }}
-                        className="py-5 bg-neon-blue text-black rounded-2xl text-[11px] font-space font-black uppercase italic flex items-center justify-center gap-2"
+                        disabled={wasDismissed && !dismissalSaved}
+                        className="py-5 bg-neon-blue text-black rounded-2xl text-[11px] font-space font-black uppercase italic flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                       >
-                         Finish Match <ChevronRight className="w-4 h-4" />
+                        Finish Match <ChevronRight className="w-4 h-4" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => {
                           closeMatch();
                           setShowEndSeriesConfirm(true);
                         }}
-                        className="py-5 glass rounded-2xl text-[11px] font-space font-black uppercase italic border-neon-red/30 text-neon-red flex items-center justify-center gap-2"
+                        disabled={wasDismissed && !dismissalSaved}
+                        className="py-5 glass rounded-2xl text-[11px] font-space font-black uppercase italic border-neon-red/30 text-neon-red flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
                       >
                         End Series <Flame className="w-4 h-4" />
                       </button>
@@ -857,7 +1034,7 @@ export default function LiveScoring() {
                     <div 
                       key={player.id}
                       className={`glass rounded-[24px] p-4 flex items-center justify-between border-white/5 ${
-                        player.status === 'absconded' ? 'opacity-40 grayscale pointer-events-none' : ''
+                        player.status === 'absconded' ? 'opacity-45 grayscale' : ''
                       } ${isCurrent ? 'ring-1 ring-neon-blue/50 bg-neon-blue/5' : ''}`}
                     >
                       <div className="flex items-center gap-4">

@@ -25,6 +25,17 @@ export interface Player {
   totalSixes: number;
   totalFours: number;
   joinedAtMatchIndex: number; // 0 if joined from start
+  /** Persisted on tournament roster: excluded from Treat / active danger until manually cleared */
+  seriesAbsconded?: boolean;
+  /** 1-based series match number when marked absconded (for results copy) */
+  abscondedAtMatchNumber?: number;
+  /** Dismissal details recorded when a batter is out */
+  dismissal?: {
+    bowlerId: string;
+    bowlerName: string;
+    fielderId?: string;
+    fielderName?: string;
+  };
 }
 
 export interface Match {

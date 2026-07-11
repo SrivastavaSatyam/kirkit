@@ -9,7 +9,18 @@ export type ShuffleEntry = { id: string; name: string };
 
 interface OrderShuffleProps {
   entries: ShuffleEntry[];
+  /** Roster ids that stay out until user marks In (e.g. series `seriesAbsconded`). */
+  defaultAbscondedIds?: string[];
   onComplete: (orderedIds: string[], abscondedIds: string[]) => void;
+}
+
+function abscondedMapForIds(idsList: string[], defaultAbscondedIds?: string[]): Record<string, boolean> {
+  const d = new Set(defaultAbscondedIds ?? []);
+  const m: Record<string, boolean> = {};
+  for (const id of idsList) {
+    if (d.has(id)) m[id] = true;
+  }
+  return m;
 }
 
 /** Fisher–Yates shuffle (unbiased); returns a new array */
@@ -22,7 +33,7 @@ function shuffleCopy<T>(arr: T[]): T[] {
   return a;
 }
 
-export default function OrderShuffle({ entries, onComplete }: OrderShuffleProps) {
+export default function OrderShuffle({ entries, defaultAbscondedIds, onComplete }: OrderShuffleProps) {
   const { addPlayerToSeries } = useGame();
   const [newPlayerName, setNewPlayerName] = useState('');
 
@@ -37,7 +48,9 @@ export default function OrderShuffle({ entries, onComplete }: OrderShuffleProps)
   const [displayOrder, setDisplayOrder] = useState<string[]>([]);
   /** Frozen order from the randomizer; new players after reveal are appended via `revealedFullOrder` (derived). */
   const [lockedShuffleOrder, setLockedShuffleOrder] = useState<string[] | null>(null);
-  const [abscondedById, setAbscondedById] = useState<Record<string, boolean>>({});
+  const [abscondedById, setAbscondedById] = useState<Record<string, boolean>>(() =>
+    abscondedMapForIds(entries.map((e) => e.id), defaultAbscondedIds),
+  );
 
   const toggleAbsconded = useCallback((id: string) => {
     setAbscondedById((prev) => ({ ...prev, [id]: !prev[id] }));
@@ -106,14 +119,14 @@ export default function OrderShuffle({ entries, onComplete }: OrderShuffleProps)
       const single = [...ids];
       setDisplayOrder(single);
       setLockedShuffleOrder(single);
-      setAbscondedById({});
+      setAbscondedById(abscondedMapForIds(single, defaultAbscondedIds));
       setPhase('revealed');
       return;
     }
 
     stopLoop();
     setLockedShuffleOrder(null);
-    setAbscondedById({});
+    setAbscondedById(abscondedMapForIds(ids, defaultAbscondedIds));
     setDisplayOrder(shuffleCopy(ids));
     setPhase('shuffling');
     const DURATION_MS = 2800;
@@ -161,7 +174,7 @@ export default function OrderShuffle({ entries, onComplete }: OrderShuffleProps)
           <p className="font-mono text-[10px] uppercase tracking-widest text-neon-blue">
             {phase === 'preview' && 'Add anyone missing, then randomize — late adds after shuffle slot in at the end'}
             {phase === 'shuffling' && 'Random draft in progress'}
-            {phase === 'revealed' && 'Mark no-shows, then start — next In opens if #1 is out'}
+            {phase === 'revealed' && 'Mark no-shows — series absconded default Out until In. Next In opens if #1 is Out.'}
           </p>
         </div>
 
@@ -250,7 +263,7 @@ export default function OrderShuffle({ entries, onComplete }: OrderShuffleProps)
                       : 'border-neon-green/50 text-neon-green bg-neon-green/15'
                   }`}
                 >
-                  {abs ? 'Out' : 'In'}
+                  {abs ? 'Out — absconded' : 'In — playing'}
                 </button>
               )}
               {phase === 'revealed' && isOpenerRow && !abs && <Crown className="w-5 h-5 text-black animate-bounce shrink-0" />}

@@ -12,6 +12,9 @@ function n(x: unknown, fallback = 0): number {
 }
 
 function normalizePlayer(p: Player): Player {
+  const amn = p.abscondedAtMatchNumber;
+  const abscondedAtMatchNumber =
+    amn != null && Number.isFinite(Number(amn)) ? Math.max(1, Math.floor(Number(amn))) : undefined;
   return {
     ...p,
     avatar: typeof p.avatar === 'string' && p.avatar.length > 0 ? p.avatar : undefined,
@@ -24,6 +27,8 @@ function normalizePlayer(p: Player): Player {
     totalSixes: n(p.totalSixes),
     totalFours: n(p.totalFours),
     joinedAtMatchIndex: n(p.joinedAtMatchIndex),
+    seriesAbsconded: Boolean(p.seriesAbsconded),
+    abscondedAtMatchNumber,
   };
 }
 
@@ -72,6 +77,7 @@ interface GameContextType {
   addPlayerToSeries: (name: string, nickname?: string) => void;
   togglePlayerAbsconded: (playerId: string) => void;
   endSeries: () => void;
+  recordDismissal: (bowlerId: string, fielderId?: string) => void;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -158,28 +164,37 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   };
 
   const startNewMatch = (name: string, location: string, battingOrderIds?: string[], abscondedIds?: string[]) => {
-    let roster: Player[] = [];
+    let mergedRoster: Player[] = [];
 
     setTournament((prev) => {
       if (!prev) return prev;
-      roster = battingOrderIds?.length
+      const base = battingOrderIds?.length
         ? orderPlayersByIds(prev.players, battingOrderIds)
-        : prev.players;
-      if (battingOrderIds?.length) {
-        return { ...prev, players: roster };
-      }
-      return prev;
+        : [...prev.players];
+      const orderSet = new Set(abscondedIds ?? []);
+      const nextMatchNum = prev.matches.length + 1;
+      mergedRoster = base.map((p) => {
+        const wasSeries = Boolean(p.seriesAbsconded);
+        /** Order screen passes full absconded set; marking In clears series absconded. */
+        const nowAbs = orderSet.has(p.id);
+        const abscondedAtMatchNumber = !nowAbs
+          ? undefined
+          : wasSeries && p.abscondedAtMatchNumber != null
+            ? p.abscondedAtMatchNumber
+            : nextMatchNum;
+        return { ...p, seriesAbsconded: nowAbs, abscondedAtMatchNumber };
+      });
+      return { ...prev, players: mergedRoster };
     });
 
-    if (roster.length === 0) return;
+    if (mergedRoster.length === 0) return;
 
-    const absSet = new Set(abscondedIds ?? []);
-    const playingCount = roster.filter((p) => !absSet.has(p.id)).length;
+    const playingCount = mergedRoster.filter((p) => !p.seriesAbsconded).length;
     if (playingCount === 0) return;
 
-    const firstBatterIndex = roster.findIndex((p) => !absSet.has(p.id));
+    const firstBatterIndex = mergedRoster.findIndex((p) => !p.seriesAbsconded);
 
-    const players: Player[] = roster.map((p, i) => ({
+    const players: Player[] = mergedRoster.map((p, i) => ({
       ...p,
       score: 0,
       ballsFaced: 0,
@@ -187,7 +202,7 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       sixes: 0,
       isOut: false,
       history: [],
-      status: absSet.has(p.id) ? ('absconded' as const) : i === firstBatterIndex ? ('batting' as const) : ('pending' as const),
+      status: p.seriesAbsconded ? ('absconded' as const) : i === firstBatterIndex ? ('batting' as const) : ('pending' as const),
     }));
 
     setActiveMatch({
@@ -242,7 +257,8 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
       totalMatches: 0, // Previous matches counted as 0 runs
       totalSixes: 0,
       totalFours: 0,
-      joinedAtMatchIndex: tournament.matches.length
+      joinedAtMatchIndex: tournament.matches.length,
+      seriesAbsconded: false,
     };
 
     setTournament(prev => {
@@ -269,17 +285,51 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
   };
 
   const togglePlayerAbsconded = (playerId: string) => {
-    setActiveMatch(prev => {
+    let nextSeriesAbsconded: boolean | undefined;
+
+    setActiveMatch((prev) => {
       if (!prev) return prev;
-      const newPlayers = prev.players.map(p => {
-        if (p.id === playerId) {
-          const newStatus = p.status === 'absconded' ? 'pending' : 'absconded';
-          return { ...p, status: newStatus as any };
-        }
-        return p;
+      const newPlayers = prev.players.map((p) => {
+        if (p.id !== playerId) return p;
+        const newStatus: Player['status'] = p.status === 'absconded' ? 'pending' : 'absconded';
+        nextSeriesAbsconded = newStatus === 'absconded';
+        return { ...p, status: newStatus };
       });
-      
-      return { ...prev, players: newPlayers };
+
+      const allDone = newPlayers.every((p) => p.status === 'completed' || p.status === 'absconded');
+      const isFinished = allDone;
+
+      let playersOut = newPlayers;
+      let currentBatterIndex = prev.currentBatterIndex;
+
+      /** If the match can continue but nobody is on strike, open the first pending slot (e.g. un-abscond after match was "finished"). */
+      if (!allDone && !playersOut.some((p) => p.status === 'batting')) {
+        const firstPendingIdx = playersOut.findIndex((p) => p.status === 'pending');
+        if (firstPendingIdx !== -1) {
+          playersOut = playersOut.map((p, i) =>
+            i === firstPendingIdx ? { ...p, status: 'batting' as const } : p,
+          );
+          currentBatterIndex = firstPendingIdx;
+        }
+      }
+
+      return { ...prev, players: playersOut, currentBatterIndex, isFinished };
+    });
+
+    setTournament((prev) => {
+      if (!prev || nextSeriesAbsconded === undefined) return prev;
+      const matchNum = prev.matches.length + 1;
+      return {
+        ...prev,
+        players: prev.players.map((tp) => {
+          if (tp.id !== playerId) return tp;
+          return {
+            ...tp,
+            seriesAbsconded: nextSeriesAbsconded,
+            abscondedAtMatchNumber: nextSeriesAbsconded ? tp.abscondedAtMatchNumber ?? matchNum : undefined,
+          };
+        }),
+      };
     });
   };
 
@@ -317,16 +367,23 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
         return prevTournament;
       }
 
-      // Update cumulative stats in tournament players
-      const updatedTournamentPlayers = prevTournament.players.map(tp => {
-        const matchPlayer = matchToClose.players.find(mp => mp.id === tp.id);
+      // Update cumulative stats + persist series absconded from match sheet
+      const closingMatchNum = prevTournament.matches.length + 1;
+      const updatedTournamentPlayers = prevTournament.players.map((tp) => {
+        const matchPlayer = matchToClose.players.find((mp) => mp.id === tp.id);
         if (matchPlayer) {
+          const seriesAbsconded = Boolean(tp.seriesAbsconded) || matchPlayer.status === 'absconded';
+          const abscondedAtMatchNumber = !seriesAbsconded
+            ? undefined
+            : tp.abscondedAtMatchNumber ?? closingMatchNum;
           return {
             ...tp,
             cumulativeRuns: n(tp.cumulativeRuns) + n(matchPlayer.score),
             totalMatches: n(tp.totalMatches) + 1,
             totalSixes: n(tp.totalSixes) + n(matchPlayer.sixes),
             totalFours: n(tp.totalFours) + n(matchPlayer.fours),
+            seriesAbsconded,
+            abscondedAtMatchNumber,
           };
         }
         return tp;
@@ -400,23 +457,46 @@ export function GameProvider({ children }: { children: React.ReactNode }) {
     setActiveMatch(null);
   };
 
+  const recordDismissal = (bowlerId: string, fielderId?: string) => {
+    setActiveMatch(prev => {
+      if (!prev) return prev;
+      const currentPlayer = prev.players[prev.currentBatterIndex];
+      if (!currentPlayer) return prev;
+      const bowler = prev.players.find(p => p.id === bowlerId);
+      const fielder = fielderId ? prev.players.find(p => p.id === fielderId) : undefined;
+      const newPlayers = prev.players.map((p, i) => {
+        if (i !== prev.currentBatterIndex) return p;
+        return {
+          ...p,
+          dismissal: {
+            bowlerId,
+            bowlerName: bowler?.name ?? '',
+            ...(fielderId && fielder ? { fielderId, fielderName: fielder.name } : {}),
+          },
+        };
+      });
+      return { ...prev, players: newPlayers };
+    });
+  };
+
   return (
-    <GameContext.Provider value={{ 
+    <GameContext.Provider value={{
       gameHydrated,
-      tournament, 
-      activeMatch, 
-      startTournament, 
-      startNewMatch, 
-      recordBall, 
-      undoBall, 
-      nextBatter, 
-      closeMatch, 
+      tournament,
+      activeMatch,
+      startTournament,
+      startNewMatch,
+      recordBall,
+      undoBall,
+      nextBatter,
+      closeMatch,
       discardActiveMatch,
       resetTournament,
       reorderPlayers,
       addPlayerToSeries,
       togglePlayerAbsconded,
-      endSeries
+      endSeries,
+      recordDismissal,
     }}>
       {children}
     </GameContext.Provider>

@@ -12,9 +12,11 @@ A gully cricket scoring and series tracker built with Next.js 15, React 19, and 
 - **Series Management** — Multi-match tournament with cumulative standings
 - **MVP System** — Proportional batting, bowling, and fielding points across the series
 - **Batting Order** — Auto-generated order based on cumulative MVP rankings
-- **Treat Zone** — Tracks the lowest-ranked player who owes the group a treat
+- **Treat Zone** — Tracks the lowest-ranked active player who owes the group a treat (MVP-based)
+- **Absconded Players** — Series-persisted exclusion from batting queue and Treat eligibility
 - **Escape Target** — Live run targets during innings so every batter knows what to chase
 - **Dismissal Tracking** — Records bowler and fielder for every wicket
+- **Series Results** — End-of-series MVP awards, Treat sponsor, and absconded summary
 
 ## Tech Stack
 
@@ -31,6 +33,9 @@ A gully cricket scoring and series tracker built with Next.js 15, React 19, and 
 # Install dependencies
 npm install
 
+# Optional: copy env template
+cp .env.example .env.local
+
 # Start the dev server
 npm run dev
 ```
@@ -45,9 +50,11 @@ app/                  Next.js App Router pages
 ├── match/
 │   ├── create/       New match setup
 │   └── scoring/      Live ball-by-ball scoring
-├── leaderboard/      Series standings (MVP-ranked)
+├── leaderboard/      Hall of Fame (runs + MVP treat zone)
 ├── mvp/              Full MVP leaderboard
-└── results/          End-of-series results
+├── results/          End-of-series results (canonical)
+├── profile/          Player profile
+└── applet/app/results/  Legacy re-export → app/results
 
 components/           React components
 lib/                  Pure logic (types, store, MVP engine, escape target, standings)

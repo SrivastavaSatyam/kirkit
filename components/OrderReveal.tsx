@@ -4,6 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Tournament } from '@/lib/types';
 import { ChevronUp, ChevronDown, Minus, Flame, AlertTriangle, Zap, Sword } from 'lucide-react';
+import { computeSeriesMvp } from '@/lib/mvp';
 
 interface OrderRevealProps {
   tournament: Tournament;
@@ -11,7 +12,9 @@ interface OrderRevealProps {
 }
 
 export default function OrderReveal({ tournament, onConfirm }: OrderRevealProps) {
-  const [abscondedById, setAbscondedById] = useState<Record<string, boolean>>({});
+  const [abscondedById, setAbscondedById] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(tournament.players.filter((p) => p.seriesAbsconded).map((p) => [p.id, true])),
+  );
   const lastMatch = tournament.matches[tournament.matches.length - 1];
 
   const toggleAbsconded = (id: string) => {
@@ -21,55 +24,45 @@ export default function OrderReveal({ tournament, onConfirm }: OrderRevealProps)
   const newsOrderData = useMemo(() => {
     if (!lastMatch) return [];
 
-    // 1. Sort players based on rules:
-    // - Previous match score DESC
-    // - If tied: Previous match batting order ASC
-    // - New players: After everyone with higher scores, join order priority
-    
+    // Cumulative MVP points for each player (from all completed matches)
+    const mvpEntries = computeSeriesMvp(tournament.matches, tournament.players);
+    const mvpById = new Map(mvpEntries.map(e => [e.playerId, e.totalMvpPoints]));
+
+    // Sort by cumulative MVP points DESC
+    // Tie-break: earlier batter in previous match gets priority
     const sorted = [...tournament.players].sort((a, b) => {
-      const pAId = lastMatch.players.findIndex(p => p.id === a.id);
-      const pBId = lastMatch.players.findIndex(p => p.id === b.id);
-      
-      const scoreA = pAId !== -1 ? lastMatch.players[pAId].score : 0;
-      const scoreB = pBId !== -1 ? lastMatch.players[pBId].score : 0;
+      const mvpA = mvpById.get(a.id) ?? 0;
+      const mvpB = mvpById.get(b.id) ?? 0;
 
-      if (scoreB !== scoreA) {
-        return scoreB - scoreA;
-      }
+      if (mvpB !== mvpA) return mvpB - mvpA;
 
-      // Tie breaker: Earlier batter in previous match gets priority
-      // If both were in previous match
-      if (pAId !== -1 && pBId !== -1) {
-        return pAId - pBId;
-      }
+      const pAIdx = lastMatch.players.findIndex(p => p.id === a.id);
+      const pBIdx = lastMatch.players.findIndex(p => p.id === b.id);
 
-      // If one is new, new one goes after
-      if (pAId === -1 && pBId !== -1) return 1;
-      if (pAId !== -1 && pBId === -1) return -1;
+      if (pAIdx !== -1 && pBIdx !== -1) return pAIdx - pBIdx;
+      if (pAIdx === -1 && pBIdx !== -1) return 1;
+      if (pAIdx !== -1 && pBIdx === -1) return -1;
 
-      // Both new: Use join order (tournament.players index)
-      return tournament.players.findIndex(p => p.id === a.id) - tournament.players.findIndex(p => p.id === b.id);
+      // Both new: use series join order
+      return (
+        tournament.players.findIndex(p => p.id === a.id) -
+        tournament.players.findIndex(p => p.id === b.id)
+      );
     });
 
     return sorted.map((player, newIndex) => {
       const prevIndex = lastMatch.players.findIndex(p => p.id === player.id);
       const prevScore = prevIndex !== -1 ? lastMatch.players[prevIndex].score : 0;
-      
-      let movement = 0;
-      if (prevIndex !== -1) {
-        movement = prevIndex - newIndex;
-      } else {
-        // New players essentially start at the "bottom" and move up if they have 0
-        // But for simplicity, we'll say 0 movement or relative to list length
-        movement = 0; 
-      }
+      const mvpPoints = mvpById.get(player.id) ?? 0;
+      const movement  = prevIndex !== -1 ? prevIndex - newIndex : 0;
 
       return {
         ...player,
         prevScore,
+        mvpPoints,
         movement,
         newIndex,
-        isNew: prevIndex === -1
+        isNew: prevIndex === -1,
       };
     });
   }, [tournament, lastMatch]);
@@ -102,10 +95,10 @@ export default function OrderReveal({ tournament, onConfirm }: OrderRevealProps)
             Next Match Order
           </h2>
           <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-gray-500">
-            Generated from previous match performance
+            Ordered by cumulative MVP points
           </p>
           <p className="mx-auto mt-2 max-w-sm font-mono text-[9px] uppercase tracking-widest text-gray-600 sm:mt-3">
-            Tag absconders before play — if the opener is out, the next playing batter opens.
+            Series absconded default to Out until you mark In — playing. If the listed opener is Out, the next In batter opens.
           </p>
         </motion.div>
 
@@ -161,7 +154,7 @@ export default function OrderReveal({ tournament, onConfirm }: OrderRevealProps)
                   )}
                 </div>
                 <p className="text-[9px] font-mono text-gray-500 uppercase tracking-widest">
-                  Prev Match: {data.prevScore} runs
+                  MVP {data.mvpPoints.toFixed(2)} pts · prev {data.prevScore}R
                 </p>
               </div>
 

@@ -72,6 +72,7 @@ export default function CreateMatch() {
     return (
       <OrderShuffle
         entries={tournament.players.map((p) => ({ id: p.id, name: p.name }))}
+        defaultAbscondedIds={tournament.players.filter((p) => p.seriesAbsconded).map((p) => p.id)}
         onComplete={handleShuffleComplete}
       />
     );
